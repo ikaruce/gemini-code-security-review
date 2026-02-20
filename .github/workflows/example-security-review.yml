@@ -1,0 +1,29 @@
+name: Security Review (Example)
+
+# This is an EXAMPLE workflow showing how to use gemini-code-security-review.
+# Copy this to YOUR repository's .github/workflows/ directory.
+
+permissions:
+  pull-requests: write
+  contents: read
+
+on:
+  pull_request:
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+
+      - uses: your-org/gemini-code-security-review@main
+        with:
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+          comment-pr: true
+          upload-results: true
+          # gemini-model: gemini-2.5-pro   # optional, defaults to gemini-2.5-pro
+          # geminicli-timeout: '20'         # optional, minutes
+          # exclude-directories: 'tests,docs'  # optional

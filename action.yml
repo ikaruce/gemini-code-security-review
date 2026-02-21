@@ -48,6 +48,11 @@ inputs:
     required: false
     default: ''
 
+  local-llm-api-key:
+    description: 'API key / Bearer token for authenticating with the local LLM server (e.g. vLLM). Sent as Authorization: Bearer <token>. Leave empty if no auth is required.'
+    required: false
+    default: ''
+
   run-every-commit:
     description: 'Run Gemini CLI on every commit (skips cache check). Warning: This may lead to more false positives on PRs with many commits as the AI analyzes the same code multiple times.'
     required: false
@@ -128,12 +133,13 @@ runs:
         LLM_PROVIDER: ${{ inputs.llm-provider }}
         LOCAL_LLM_MODEL: ${{ inputs.local-llm-model }}
         LOCAL_LLM_BASE_URL: ${{ inputs.local-llm-base-url }}
+        LOCAL_LLM_API_KEY: ${{ inputs.local-llm-api-key }}
         FALSE_POSITIVE_FILTERING_INSTRUCTIONS: ${{ inputs.false-positive-filtering-instructions }}
         CUSTOM_SECURITY_SCAN_INSTRUCTIONS: ${{ inputs.custom-security-scan-instructions }}
         REPO_PATH: ${{ github.workspace }}
       run: |
         RESULTS_FILE="/tmp/gemini-security-review-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}.json"
-        python ${{ github.action_path }}/geminicli/github_action_audit.py > "$RESULTS_FILE" 2>&1
+        cd ${{ github.action_path }} && python -m geminicli.github_action_audit > "$RESULTS_FILE" 2>&1
         EXIT_CODE=$?
         echo "results_file=$RESULTS_FILE" >> $GITHUB_OUTPUT
         FINDINGS_COUNT=$(cat "$RESULTS_FILE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('findings', [])))" 2>/dev/null || echo "0")

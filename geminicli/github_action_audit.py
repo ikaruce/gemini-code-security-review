@@ -8,6 +8,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+# Ensure the action root (parent of this file's directory) is on sys.path
+# so the `geminicli` package is always importable regardless of how this
+# script is invoked (e.g. `python /path/to/geminicli/github_action_audit.py`).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import requests
 
 from geminicli.constants import (
@@ -262,13 +267,15 @@ class SimpleGeminiRunner:
 class LocalLLMRunner:
     """Runner that calls a local LLM via OpenAI-compatible REST API.
 
-    Supports Ollama (default) and LM Studio.
+    Supports Ollama (default), LM Studio, and vLLM (or any OpenAI-compatible server).
     No external CLI needed — uses only the `requests` package.
 
     Environment variables:
-        LLM_PROVIDER      : 'ollama' (default) | 'lmstudio'
+        LLM_PROVIDER      : 'ollama' (default) | 'lmstudio' | 'vllm'
         LOCAL_LLM_MODEL   : model name, e.g. 'llama3.2', 'qwen2.5-coder'
-        LOCAL_LLM_BASE_URL: override the base URL (e.g. remote Ollama server)
+        LOCAL_LLM_BASE_URL: override the base URL (e.g. remote vLLM server)
+        LOCAL_LLM_API_KEY : Bearer token for authentication (e.g. vLLM --api-key).
+                            Sent as 'Authorization: Bearer <token>'. Optional.
         LLM_TIMEOUT_MINUTES: analysis timeout in minutes (default: 20)
     """
 
@@ -278,6 +285,7 @@ class LocalLLMRunner:
         model: Optional[str] = None,
         base_url: Optional[str] = None,
         provider: Optional[str] = None,
+        api_key: Optional[str] = None,
     ):
         self.provider = (
             provider
@@ -302,6 +310,14 @@ class LocalLLMRunner:
 
         # OpenAI-compatible chat completions endpoint
         self.chat_url = f"{self.base_url}/v1/chat/completions"
+
+        # Auth headers: Bearer token (vLLM --api-key or any OpenAI-compatible server)
+        resolved_api_key = api_key or os.environ.get("LOCAL_LLM_API_KEY", "")
+        self.auth_headers: Dict[str, str] = (
+            {"Authorization": f"Bearer {resolved_api_key}"}
+            if resolved_api_key
+            else {}
+        )
 
     def run_security_audit(
         self, repo_dir: Path, prompt: str
@@ -336,6 +352,7 @@ class LocalLLMRunner:
                 resp = requests.post(
                     self.chat_url,
                     json=payload,
+                    headers=self.auth_headers,
                     timeout=self.timeout_seconds,
                 )
                 resp.raise_for_status()
@@ -405,7 +422,7 @@ class LocalLLMRunner:
         # Check server health
         health_url = f"{self.base_url}/api/tags" if self.provider == "ollama" else f"{self.base_url}/v1/models"
         try:
-            resp = requests.get(health_url, timeout=5)
+            resp = requests.get(health_url, headers=self.auth_headers, timeout=5)
             resp.raise_for_status()
         except requests.exceptions.ConnectionError:
             return (

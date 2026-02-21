@@ -8,6 +8,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+# Ensure the action root (parent of this file's directory) is on sys.path
+# so the `geminicli` package is always importable regardless of how this
+# script is invoked (e.g. `python /path/to/geminicli/github_action_audit.py`).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import requests
 
 from geminicli.constants import (

@@ -48,6 +48,11 @@ inputs:
     required: false
     default: ''
 
+  local-llm-api-key:
+    description: 'API key / Bearer token for authenticating with the local LLM server (e.g. vLLM). Sent as Authorization: Bearer <token>. Leave empty if no auth is required.'
+    required: false
+    default: ''
+
   run-every-commit:
     description: 'Run Gemini CLI on every commit (skips cache check). Warning: This may lead to more false positives on PRs with many commits as the AI analyzes the same code multiple times.'
     required: false
@@ -128,6 +133,7 @@ runs:
         LLM_PROVIDER: ${{ inputs.llm-provider }}
         LOCAL_LLM_MODEL: ${{ inputs.local-llm-model }}
         LOCAL_LLM_BASE_URL: ${{ inputs.local-llm-base-url }}
+        LOCAL_LLM_API_KEY: ${{ inputs.local-llm-api-key }}
         FALSE_POSITIVE_FILTERING_INSTRUCTIONS: ${{ inputs.false-positive-filtering-instructions }}
         CUSTOM_SECURITY_SCAN_INSTRUCTIONS: ${{ inputs.custom-security-scan-instructions }}
         REPO_PATH: ${{ github.workspace }}

@@ -133,7 +133,7 @@ runs:
         REPO_PATH: ${{ github.workspace }}
       run: |
         RESULTS_FILE="/tmp/gemini-security-review-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}.json"
-        PYTHONPATH=${{ github.action_path }} python ${{ github.action_path }}/geminicli/github_action_audit.py > "$RESULTS_FILE" 2>&1
+        cd ${{ github.action_path }} && python -m geminicli.github_action_audit > "$RESULTS_FILE" 2>&1
         EXIT_CODE=$?
         echo "results_file=$RESULTS_FILE" >> $GITHUB_OUTPUT
         FINDINGS_COUNT=$(cat "$RESULTS_FILE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('findings', [])))" 2>/dev/null || echo "0")

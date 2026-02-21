@@ -508,7 +508,7 @@ def initialize_clients() -> Tuple[GitHubActionClient, Union[SimpleGeminiRunner, 
     github_client = GitHubActionClient(token=github_token)
 
     provider = os.environ.get("LLM_PROVIDER", "gemini").lower()
-    if provider in ("ollama", "lmstudio"):
+    if provider != "gemini":
         runner: Union[SimpleGeminiRunner, LocalLLMRunner] = LocalLLMRunner(
             timeout_minutes=timeout_minutes,
             provider=provider,

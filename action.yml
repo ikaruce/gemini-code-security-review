@@ -1,5 +1,5 @@
 name: 'Gemini Code Security Reviewer'
-description: 'AI-powered security review GitHub Action using Gemini CLI to analyze code changes for security vulnerabilities'
+description: 'AI-powered security review GitHub Action using Gemini CLI custom commands'
 author: 'Community'
 
 inputs:
@@ -13,78 +13,38 @@ inputs:
     required: false
     default: 'true'
 
-  exclude-directories:
-    description: 'Comma-separated list of directories to exclude from scanning'
-    required: false
-    default: ''
-
   geminicli-timeout:
     description: 'Timeout for Gemini CLI analysis in minutes'
     required: false
     default: '20'
 
   gemini-api-key:
-    description: 'Google Gemini API key. Required when llm-provider is "gemini" (default). Leave empty for local LLM.'
+    description: 'Google Gemini API key'
     required: false
     default: ''
 
   gemini-model:
-    description: 'Gemini model to use (e.g., gemini-2.5-pro, gemini-2.0-flash). Only used when llm-provider is "gemini".'
-    required: false
-    default: ''
-
-  llm-provider:
-    description: 'LLM provider to use: "gemini" (default, cloud), "ollama" (local), "lmstudio" (local)'
-    required: false
-    default: 'gemini'
-
-  local-llm-model:
-    description: 'Local LLM model name (e.g., llama3.2, qwen2.5-coder, deepseek-r1). Only used when llm-provider is "ollama" or "lmstudio".'
-    required: false
-    default: 'llama3.2'
-
-  local-llm-base-url:
-    description: 'Base URL for local LLM server. Defaults: Ollama=http://localhost:11434, LM Studio=http://localhost:1234. Can point to a remote server.'
-    required: false
-    default: ''
-
-  local-llm-api-key:
-    description: 'API key / Bearer token for authenticating with the local LLM server (e.g. vLLM). Sent as Authorization: Bearer <token>. Leave empty if no auth is required.'
+    description: 'Gemini model to use (e.g., gemini-2.5-pro, gemini-2.0-flash)'
     required: false
     default: ''
 
   run-every-commit:
-    description: 'Run Gemini CLI on every commit (skips cache check). Warning: This may lead to more false positives on PRs with many commits as the AI analyzes the same code multiple times.'
+    description: 'Run on every commit (skips cache check). Warning: may increase false positives on PRs with many commits.'
     required: false
     default: 'false'
 
-  false-positive-filtering-instructions:
-    description: 'Path to custom false positive filtering instructions text file'
-    required: false
-    default: ''
-
-  custom-security-scan-instructions:
-    description: 'Path to custom security scan instructions text file to append to audit prompt'
-    required: false
-    default: ''
-
 outputs:
   findings-count:
-    description: 'Number of security findings'
+    description: 'Number of security findings (HIGH + MEDIUM)'
     value: ${{ steps.geminicli-scan.outputs.findings_count }}
 
   results-file:
-    description: 'Path to the results JSON file'
-    value: ${{ steps.geminicli-scan.outputs.results_file }}
+    description: 'Path to the results markdown file'
+    value: ${{ steps.geminicli-scan.outputs.results_file || steps.use-cache.outputs.results_file }}
 
 runs:
   using: 'composite'
   steps:
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
     - name: Install Node.js (for Gemini CLI)
       uses: actions/setup-node@v4
       with:
@@ -94,20 +54,21 @@ runs:
       shell: bash
       run: npm install -g @google/gemini-cli
 
-    - name: Install Python dependencies
+    - name: Install security-review custom command
       shell: bash
       run: |
-        pip install -r ${{ github.action_path }}/geminicli/requirements.txt
+        mkdir -p ~/.gemini/commands
+        cp ${{ github.action_path }}/.gemini/commands/security-review.toml ~/.gemini/commands/security-review.toml
 
     - name: Check for cached results
       id: check-cache
       shell: bash
       run: |
         if [ "${{ inputs.run-every-commit }}" = "true" ]; then
-          echo "skip_cache=true" >> $GITHUB_OUTPUT
+          echo "cache_hit=false" >> $GITHUB_OUTPUT
         else
           CACHE_KEY="${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}"
-          CACHE_FILE="/tmp/gemini-security-review-${CACHE_KEY}.json"
+          CACHE_FILE="/tmp/gemini-security-review-${CACHE_KEY}.md"
           if [ -f "$CACHE_FILE" ]; then
             echo "cache_hit=true" >> $GITHUB_OUTPUT
             echo "cache_file=$CACHE_FILE" >> $GITHUB_OUTPUT
@@ -122,28 +83,26 @@ runs:
       if: steps.check-cache.outputs.cache_hit != 'true'
       shell: bash
       env:
-        GITHUB_TOKEN: ${{ github.token }}
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
-        GITHUB_REPOSITORY: ${{ github.repository }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-        EXCLUDE_DIRECTORIES: ${{ inputs.exclude-directories }}
-        GEMINICLI_TIMEOUT_MINUTES: ${{ inputs.geminicli-timeout }}
-        GEMINI_MODEL: ${{ inputs.gemini-model }}
-        RUN_EVERY_COMMIT: ${{ inputs.run-every-commit }}
-        LLM_PROVIDER: ${{ inputs.llm-provider }}
-        LOCAL_LLM_MODEL: ${{ inputs.local-llm-model }}
-        LOCAL_LLM_BASE_URL: ${{ inputs.local-llm-base-url }}
-        LOCAL_LLM_API_KEY: ${{ inputs.local-llm-api-key }}
-        FALSE_POSITIVE_FILTERING_INSTRUCTIONS: ${{ inputs.false-positive-filtering-instructions }}
-        CUSTOM_SECURITY_SCAN_INSTRUCTIONS: ${{ inputs.custom-security-scan-instructions }}
-        REPO_PATH: ${{ github.workspace }}
       run: |
-        RESULTS_FILE="/tmp/gemini-security-review-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}.json"
-        cd ${{ github.action_path }} && python -m geminicli.github_action_audit > "$RESULTS_FILE" 2>&1
+        RESULTS_FILE="/tmp/gemini-security-review-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}.md"
+
+        MODEL_ARG=""
+        if [ -n "${{ inputs.gemini-model }}" ]; then
+          MODEL_ARG="--model ${{ inputs.gemini-model }}"
+        fi
+
+        cd ${{ github.workspace }}
+        timeout $(( ${{ inputs.geminicli-timeout }} * 60 )) gemini $MODEL_ARG --yolo -p "/security-review" > "$RESULTS_FILE" 2>&1
         EXIT_CODE=$?
+
         echo "results_file=$RESULTS_FILE" >> $GITHUB_OUTPUT
-        FINDINGS_COUNT=$(cat "$RESULTS_FILE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('findings', [])))" 2>/dev/null || echo "0")
+
+        HIGH_COUNT=$(grep -c "Severity: High" "$RESULTS_FILE" 2>/dev/null || echo "0")
+        MED_COUNT=$(grep -c "Severity: Medium" "$RESULTS_FILE" 2>/dev/null || echo "0")
+        FINDINGS_COUNT=$(( ${HIGH_COUNT:-0} + ${MED_COUNT:-0} ))
         echo "findings_count=$FINDINGS_COUNT" >> $GITHUB_OUTPUT
+
         exit $EXIT_CODE
 
     - name: Use cached results
@@ -152,7 +111,9 @@ runs:
       shell: bash
       run: |
         echo "results_file=${{ steps.check-cache.outputs.cache_file }}" >> $GITHUB_OUTPUT
-        FINDINGS_COUNT=$(cat "${{ steps.check-cache.outputs.cache_file }}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('findings', [])))" 2>/dev/null || echo "0")
+        HIGH_COUNT=$(grep -c "Severity: High" "${{ steps.check-cache.outputs.cache_file }}" 2>/dev/null || echo "0")
+        MED_COUNT=$(grep -c "Severity: Medium" "${{ steps.check-cache.outputs.cache_file }}" 2>/dev/null || echo "0")
+        FINDINGS_COUNT=$(( ${HIGH_COUNT:-0} + ${MED_COUNT:-0} ))
         echo "findings_count=$FINDINGS_COUNT" >> $GITHUB_OUTPUT
 
     - name: Upload results as artifact
@@ -171,45 +132,21 @@ runs:
           const fs = require('fs');
           const resultsFile = '${{ steps.geminicli-scan.outputs.results_file || steps.use-cache.outputs.results_file }}';
 
-          let results;
+          let content;
           try {
-            results = JSON.parse(fs.readFileSync(resultsFile, 'utf8'));
+            content = fs.readFileSync(resultsFile, 'utf8').trim();
           } catch (e) {
             console.log('Could not read results file:', e.message);
             return;
           }
 
-          const findings = results.findings || [];
-          const highFindings = findings.filter(f => f.severity?.toUpperCase() === 'HIGH');
-          const medFindings = findings.filter(f => f.severity?.toUpperCase() === 'MEDIUM');
-
-          if (findings.length === 0) {
-            const body = `## 🛡️ Gemini Security Review\n\n✅ No security vulnerabilities found in this PR.\n\n*Powered by [Gemini Code Security Reviewer](https://github.com/your-org/gemini-code-security-review)*`;
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body
-            });
-            return;
-          }
-
-          let body = `## 🛡️ Gemini Security Review\n\n`;
-          body += `Found **${findings.length}** security issue(s): ${highFindings.length} HIGH, ${medFindings.length} MEDIUM\n\n`;
-
-          for (const finding of findings) {
-            const severity = finding.severity?.toUpperCase() || 'UNKNOWN';
-            const icon = severity === 'HIGH' ? '🔴' : severity === 'MEDIUM' ? '🟡' : '🔵';
-            body += `### ${icon} ${severity}: ${finding.category || 'Issue'} — \`${finding.file}:${finding.line}\`\n\n`;
-            body += `**Description:** ${finding.description}\n\n`;
-            if (finding.exploit_scenario) {
-              body += `**Exploit Scenario:** ${finding.exploit_scenario}\n\n`;
-            }
-            body += `**Recommendation:** ${finding.recommendation}\n\n`;
-            body += `---\n\n`;
-          }
-
-          body += `*Powered by [Gemini Code Security Reviewer](https://github.com/your-org/gemini-code-security-review)*`;
+          const body = [
+            '## 🛡️ Gemini Security Review',
+            '',
+            content,
+            '',
+            '*Powered by [Gemini Code Security Reviewer](https://github.com/your-org/gemini-code-security-review)*'
+          ].join('\n');
 
           await github.rest.issues.createComment({
             issue_number: context.issue.number,

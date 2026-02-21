@@ -419,17 +419,46 @@ class LocalLLMRunner:
 
     def validate_gemini_available(self) -> Tuple[bool, str]:
         """Validate that the local LLM server is reachable and the model exists."""
-        # Check server health
-        health_url = f"{self.base_url}/api/tags" if self.provider == "ollama" else f"{self.base_url}/v1/models"
+        # Choose health check endpoint per provider:
+        #   ollama   → /api/tags   (lists pulled models, no auth needed)
+        #   vllm     → /health     (lightweight liveness probe, no auth needed)
+        #   lmstudio / others → /v1/models (OpenAI-compatible model list)
+        if self.provider == "ollama":
+            health_url = f"{self.base_url}/api/tags"
+            health_headers: Dict[str, str] = {}
+        elif self.provider == "vllm":
+            health_url = f"{self.base_url}/health"
+            health_headers = {}          # vLLM /health does not require auth
+        else:
+            health_url = f"{self.base_url}/v1/models"
+            health_headers = self.auth_headers
+
         try:
-            resp = requests.get(health_url, headers=self.auth_headers, timeout=5)
+            resp = requests.get(health_url, headers=health_headers, timeout=10)
             resp.raise_for_status()
         except requests.exceptions.ConnectionError:
+            hints = {
+                "ollama": "ollama serve",
+                "vllm": "python -m vllm.entrypoints.openai.api_server --model <model>",
+                "lmstudio": "LM Studio → Local Server → Start",
+            }
+            hint = hints.get(self.provider, "start the LLM server")
             return (
                 False,
                 f"Cannot connect to {self.provider} at {self.base_url}. "
-                f"Start it with: {'ollama serve' if self.provider == 'ollama' else 'LM Studio → Local Server'}",
+                f"Start it with: {hint}",
             )
+        except requests.exceptions.HTTPError as e:
+            status = resp.status_code if resp is not None else "?"
+            if status in (401, 403):
+                return (
+                    False,
+                    f"Authentication failed for {self.provider} health check "
+                    f"(HTTP {status}). Check LOCAL_LLM_API_KEY.",
+                )
+            return False, f"Health check returned HTTP {status}: {e}"
+        except requests.exceptions.Timeout:
+            return False, f"Health check timed out for {self.provider} at {self.base_url}"
         except Exception as e:
             return False, f"Health check failed: {e}"
 
@@ -508,7 +537,7 @@ def initialize_clients() -> Tuple[GitHubActionClient, Union[SimpleGeminiRunner, 
     github_client = GitHubActionClient(token=github_token)
 
     provider = os.environ.get("LLM_PROVIDER", "gemini").lower()
-    if provider in ("ollama", "lmstudio"):
+    if provider != "gemini":
         runner: Union[SimpleGeminiRunner, LocalLLMRunner] = LocalLLMRunner(
             timeout_minutes=timeout_minutes,
             provider=provider,
